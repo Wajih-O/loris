@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 
-# design the interaction with the line class !!!
 
 def find_lane_pixels(binary_warped, nwindows=9, margin=100, minpix=50):
     """
@@ -95,13 +94,6 @@ def find_lane_pixels(binary_warped, nwindows=9, margin=100, minpix=50):
     return leftx, lefty, rightx, righty
 
 
-def fit_poly(leftx, lefty, rightx, righty):
-    """ Fit a second order polynomial to each lane side x = f(y) """
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
-
-    return left_fit, right_fit
-
 
 def non_zero(binary_image):
     """ return white (1/non-zero) pixel coordinates x, y (nonzerox, nonzeroy)"""
@@ -109,7 +101,7 @@ def non_zero(binary_image):
     return np.array(nonzero[1]), np.array(nonzero[0]) 
 
 
-def apply_polynomial(poly, y):
+def apply_poly(poly, y):
     """ apply polynome P on y -> P(y) """
     return np.sum(np.array([ coef*(np.power(y, exp_))for exp_, coef in zip(reversed(range(len(poly))), poly)]), axis=0).astype(int)
 
@@ -143,8 +135,6 @@ def visualize(image, left_fit, right_fit, ax = plt):
 
     # Colors in the left and right lane regions
     out_img = np.dstack((image,)*3)
-    # out_img[lefty, leftx] = [255, 0, 0] # colors left lane side in blue
-    # out_img[righty, rightx] = [0, 0, 255] # colors right lane side in red
 
     # Plots the left and right polynomials on the lane lines
     ax.imshow(out_img)
