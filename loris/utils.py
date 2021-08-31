@@ -3,7 +3,7 @@ import cv2
 
 
 def warp(img, src, dst, output_dimension=None):
-    """ Compute and apply perpective transform """
+    """Compute and apply perpective transform"""
     if output_dimension is None:
         # keep the same dimensions
         output_dimension = img.shape[:2][::-1]
