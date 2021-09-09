@@ -1,9 +1,11 @@
-from dataclasses import dataclass
-
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 
+
+def hist(img):
+    """ White pixels count as f(x)"""
+    bottom_half = img[img.shape[0]//2:]
+    return np.sum(bottom_half, axis=0)
 
 def find_lane_pixels(binary_warped, nwindows=9, margin=100, minpix=50):
     """
@@ -14,7 +16,7 @@ def find_lane_pixels(binary_warped, nwindows=9, margin=100, minpix=50):
     :param minpix: minimum number of pixels found to recenter the window
     """
     # a histogram of the bottom half of the image (expecting binary input)
-    histogram = np.sum(binary_warped[binary_warped.shape[0] // 2 :, :], axis=0)
+    histogram = hist(binary_warped)
     # Create an output image to draw on and visualize the result
     out_img = np.dstack((binary_warped, binary_warped, binary_warped))
 
@@ -51,13 +53,6 @@ def find_lane_pixels(binary_warped, nwindows=9, margin=100, minpix=50):
 
         win_xright_low = rightx_current - margin
         win_xright_high = rightx_current + margin
-
-        # # Draw the windows on the visualization image
-        # cv2.rectangle(out_img,(win_xleft_low,win_y_low),
-        # (win_xleft_high,win_y_high),(0,255,0), 2)
-
-        # cv2.rectangle(out_img,(win_xright_low,win_y_low),
-        # (win_xright_high,win_y_high),(0,255,0), 2)
 
         # Identify the nonzero pixels in x and y within the window
         good_left_inds = (
@@ -153,11 +148,18 @@ def visualize(image, left_fit, right_fit, ax=plt):
         right_fitx = 1 * ploty ** 2 + 1 * ploty
 
     # Colors in the left and right lane regions
-    out_img = np.dstack((image,) * 3)
+    if len(image.shape) == 3 and  image.shape[2] == 3:
+        out_img = image
+    else:
+        if len(image.shape) == 2:
+            out_img = np.dstack((image,) * 3)
+        else:
+            raise Exception("image dimension not supported!")
+
 
     # Plots the left and right polynomials on the lane lines
     ax.imshow(out_img)
-    ax.plot(left_fitx, ploty, color="red")
+    ax.plot(left_fitx, ploty, color="yellow")
     ax.plot(right_fitx, ploty, color="yellow")
 
 
