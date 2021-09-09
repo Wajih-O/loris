@@ -7,7 +7,7 @@ import logging
 import numpy as np
 import cv2
 
-from loris.utils import warp
+from loris.utils import Warper
 from loris.calibration.utils import undistort
 
 # from loris.lane_detection.threshold import combined_threshold
@@ -21,17 +21,12 @@ from loris.lane_detection.advanced import (
     apply_poly,
 )
 
-
 # Rectangular region (based on 2 parallel line)
 src = {"tl": [554, 480], "tr": [736, 480], "bl": [214, 720], "br": [1116, 720]}
 dest = {"tl": [320, 0], "tr": [960, 0], "bl": [320, 720], "br": [960, 720]}
 
 YM_PER_PIX = 30 / 720  # meters per pixel in y dimension
 XM_PER_PIX = 3.7 / 700  # meters per pixel in x dimension
-
-
-def rect_dict2nparray(rect: dict) -> np.ndarray:
-    return np.float32([rect["tl"], rect["tr"], rect["br"], rect["bl"]])
 
 
 def gen_curvature_calculator(fit):
@@ -50,7 +45,7 @@ def gen_curvature_calculator(fit):
     return curvature
 
 
-def convert(pixel_fit, x_meter_per_pixel, y_meter_per_pixel):
+def convert(pixel_fit, x_meter_per_pixel, y_meter_per_pixel) -> np.array:
     """Convert line poly fit from pixel to meter."""
     b_factor = x_meter_per_pixel / y_meter_per_pixel
     a_factor = b_factor / y_meter_per_pixel
@@ -74,7 +69,7 @@ class Line:
         self.bestx = None
 
         # polynomial coefficients averaged over the last n iterations
-        self.best_fit = deque(maxlen=look_back)
+        self.best_fit = None  # deque(maxlen=look_back)
 
         # polynomial coefficients for the most recent fit
         self.current_fit = [np.array([False])]
@@ -102,6 +97,7 @@ class Line:
         :param fit: the last fit to blend into the Line
         :param max_y: image y size
         """
+
         self.current_fit = fit
         self.detected = True
         y_range = np.arange(max_y)
@@ -121,7 +117,6 @@ class Line:
             self.__blend_fit(poly_fit(self.pixels_y, self.pixels_x), max_y)
         except Exception as exception:
             self._logger.error(f"initialize detection: {exception}")
-            raise exception
 
     def update_detection(self, nonzerox, nonzeroy, max_y, margin=100):
         """Given an initial second order polynomial fit update/adjust it with the current image"""
@@ -129,33 +124,37 @@ class Line:
             raise Exception("should be first initialized !")
 
         y_range = np.arange(max_y)
-        xs, ys, _ = search_around_poly(
-            nonzerox, nonzeroy, self.current_fit, margin=margin
-        )
+        xs, ys, _ = search_around_poly(nonzerox, nonzeroy, self.best_fit, margin=margin)
+        # todo a weighted version (to weight the current vs the best fit) now equaly weighted
         try:
             self.__blend_fit(
                 poly_fit(
                     np.concatenate((ys, y_range)),
-                    np.concatenate((xs, apply_poly(self.current_fit, y_range))),
+                    np.concatenate((xs, apply_poly(self.best_fit, y_range))),
                 ),
                 max_y,
             )
+
             self.pixels_x = xs
             self.pixels_y = ys
         except Exception as exception:
             self._logger.error(f"update detection: {exception}")
+            self.detected = False
             raise exception
 
     def pixel_curvature(self, y_eval) -> float:
         """R_curve (radius of curvature)"""
-        return self.pixel_curv_radius
+        return self.pixel_curv_radius(y_eval)
 
-    def meter_curvature():
-        """Meter curvature"""
+    def get_x(self, y_eval):
+        if self.best_fit is not None:
+            return apply_poly(self.best_fit, y_eval)
 
 
 class LaneDetector:
-    def __init__(self, calibration_params, margin=100, look_back=10):
+    def __init__(
+        self, calibration_params, warper: Warper, margin: int = 100, look_back: int = 10
+    ):
         """LaneDetector (left, right) side of the lane"""
 
         self.processed_images = 0
@@ -170,6 +169,8 @@ class LaneDetector:
         # left and right lane lines
         self.right = Line(look_back=look_back)
         self.left = Line(look_back=look_back)
+
+        self.warper = warper
 
     @staticmethod
     def line_pixel(ploty, poly_fit=None):
@@ -191,29 +192,34 @@ class LaneDetector:
         # Label warped image with (lane pixel annotation)
         out_img = np.dstack((warped_binary,) * 3)
 
+        # plotting the margin detected line/white pixels
         out_img[self.left.pixels_y, self.left.pixels_x] = [
             255,
             0,
             0,
         ]  # left lane side in red
+
         out_img[self.right.pixels_y, self.right.pixels_x] = [
             0,
             0,
             255,
         ]  # right lane side in blue
 
+        # plotting the fitted lines
         if left_x is not None:
-            out_img[ploty.astype(int), np.clip(left_x, 0, 900).astype(int)] = [
+            out_img[
+                ploty.astype(int), np.clip(left_x, 0, out_img.shape[1] - 1).astype(int)
+            ] = [
+                0,
                 255,
-                0,
-                0,
+                255,
             ]  # colors left lane side in blue
         if right_x is not None:
             out_img[
                 ploty.astype(int), np.clip(right_x, 0, out_img.shape[1] - 1).astype(int)
             ] = [
                 0,
-                0,
+                255,
                 255,
             ]  # colors left lane side in blue
 
@@ -225,20 +231,14 @@ class LaneDetector:
         pts = np.hstack((pts_left, pts_right))
 
         # Draw the lane onto the warped blank image
-        green_lane = np.copy(out_img)
+        green_lane = np.zeros_like(out_img)
         cv2.fillPoly(green_lane, np.int_([pts]), (0, 255, 0))
 
-        out_img = warp(
-            cv2.addWeighted(out_img, 0.8, green_lane, 0.2, 0, dtype=cv2.CV_32F).astype(
+        return self.warper.inv_warp(
+            cv2.addWeighted(out_img, 0.5, green_lane, 0.5, 0, dtype=cv2.CV_32F).astype(
                 np.uint8
-            ),
-            rect_dict2nparray(dest),
-            rect_dict2nparray(src),
+            )
         )
-
-        text_color = (0, 255, 0)
-        text_thickness = 2
-        return out_img
 
     def label(self, orig, warped_binary, margin_pixels=5):
         """Label/annotate a road image with detected lane"""
@@ -248,63 +248,94 @@ class LaneDetector:
 
         left_curv_radius = self.left.meter_curv_radius_func(YM_PER_PIX * max_y)
         right_curv_radius = self.right.meter_curv_radius_func(YM_PER_PIX * max_y)
-        avg_curv_radius = (left_curv_radius + right_curv_radius) / 2
+
+        # avg_curv_radius = (left_curv_radius + right_curv_radius) / 2
         out_img = cv2.addWeighted(
             orig,
-            0.7,
+            0.6,
             self.label_detection(warped_binary, margin_pixels=margin_pixels),
-            0.5,
+            0.4,
             0,
             dtype=cv2.CV_32F,
         ).astype(np.uint8)
-        # cv2.putText(out_img, f"left curv-rad at ({max_y}) {self.left.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, text_thickness)
-        # cv2.putText(out_img, f"right curv-rad at ({max_y}) {self.right.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, text_thickness)
+
         cv2.putText(
             out_img,
-            f"avg curv-rad at img-bottom({max_y}) {avg_curv_radius:.2f}",
+            f"Curv. radius left: {self.left.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}m, right: {self.right.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}m",
             (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             text_color,
             text_thickness,
         )
+        # cv2.putText(
+        #     out_img,
+        #     f"Curv. radius: {avg_curv_radius:.2f}",
+        #     (20, 40),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     1,
+        #     text_color,
+        #     text_thickness,
+        # )
 
+        #  Car offset
+        center = np.array([warped_binary.shape[1] // 2, max_y])  # image center
+        w_center_x, w_center_y = self.warper.transform(center).astype(int).ravel()
+        offset = (
+            w_center_x
+            - (self.left.get_x(w_center_y) + self.right.get_x(w_center_y)) / 2
+        ) * XM_PER_PIX
+
+        cv2.putText(
+            out_img,
+            f"Car offset: {offset:.2f}m",
+            (20, 70),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            text_color,
+            text_thickness,
+        )
         return out_img
+
+    def __init_lane(self, warped_binary):
+
+        leftx, lefty, rightx, righty = find_lane_pixels(
+            255 * warped_binary
+        )  # initialize the lane sides
+        self.left.initialize_detection(leftx, lefty, warped_binary.shape[0])
+        self.right.initialize_detection(rightx, righty, warped_binary.shape[0])
 
     def process_image(self, image):
         # undistort/correct image
         status, output = undistort(image, self.calibration_params)
         if status:
             # preprocess image apply thresholdeing pipeline then warp
-            warped_binary = warp(
-                threshold_pipeline(output),
-                rect_dict2nparray(src),
-                rect_dict2nparray(dest),
-            )
+            warped_binary = self.warper.warp(threshold_pipeline(output))
 
             if not self.left.detected or not self.right.detected:  # initialize lines
-                leftx, lefty, rightx, righty = find_lane_pixels(
-                    255 * warped_binary
-                )  # initialize the lane sides
-                self.left.initialize_detection(leftx, lefty, warped_binary.shape[0])
-                self.right.initialize_detection(rightx, righty, warped_binary.shape[0])
+                self.__init_lane(warped_binary)
 
             else:
-                nonzerox, nonzeroy = non_zero(warped_binary)
-                self.left.update_detection(
-                    nonzerox,
-                    nonzeroy,
-                    warped_binary.shape[0],
-                    margin=self.line_search_margin,
-                )
-                self.right.update_detection(
-                    nonzerox,
-                    nonzeroy,
-                    warped_binary.shape[0],
-                    margin=self.line_search_margin,
-                )
+                try:
+                    # raise Exception("to remove")
+                    nonzerox, nonzeroy = non_zero(warped_binary)
+                    self.left.update_detection(
+                        nonzerox,
+                        nonzeroy,
+                        warped_binary.shape[0],
+                        margin=self.line_search_margin,
+                    )
+                    self.right.update_detection(
+                        nonzerox,
+                        nonzeroy,
+                        warped_binary.shape[0],
+                        margin=self.line_search_margin,
+                    )
 
-            self.search_around_poly_counter += 1
+                    self.search_around_poly_counter += 1
+
+                except Exception:
+                    self.__init_lane(warped_binary)
 
             self.processed_images += 1
 
