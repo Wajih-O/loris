@@ -140,3 +140,6 @@ Assuming that the camera is mounted somewhere on the vehicle's central (longitud
 
 # Lane detection on video (section)
 ![](./output_images/video_output.gif)
+
+
+Pipeline demo/details  in `notebooks/adv_lane_detection.ipynb`
