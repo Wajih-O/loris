@@ -51,7 +51,7 @@ if status:
     warped_ax.set_title("warped image")
     ax.imshow(draw_polygone(rect_dict2nparray(src), cv2.cvtColor(output, cv2.COLOR_BGR2RGB)))
     highlight_corners(ax, src)
-    # The delimits the measured section that to check its length in pixels (without loosing the region close to the car)
+    # The horizontal red line delimits the measured section that to check its length in pixels (without loosing the region close to the car)
     warped_ax.imshow(draw_line(draw_polygone(rect_dict2nparray(dest), cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)),
         np.array([200, 690]), np.array([1100, 690]), thickness=4))
     highlight_corners(warped_ax, dest)
