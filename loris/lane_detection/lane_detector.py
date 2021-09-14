@@ -2,12 +2,13 @@ import abc
 from collections import deque
 from collections.abc import Callable
 import logging
+from typing import Optional
 
 
 import numpy as np
 import cv2
 
-from loris.utils import Warper
+from loris.perspective import PixelSize, Warper
 from loris.calibration.utils import undistort
 
 # from loris.lane_detection.threshold import combined_threshold
@@ -21,12 +22,12 @@ from loris.lane_detection.advanced import (
     apply_poly,
 )
 
-# Rectangular region (based on 2 parallel line)
-src = {"tl": [554, 480], "tr": [736, 480], "bl": [214, 720], "br": [1116, 720]}
-dest = {"tl": [320, 0], "tr": [960, 0], "bl": [320, 720], "br": [960, 720]}
+# # Rectangular region (based on 2 parallel line)
+# src = {"tl": [554, 480], "tr": [736, 480], "bl": [214, 720], "br": [1116, 720]}
+# dest = {"tl": [320, 0], "tr": [960, 0], "bl": [320, 720], "br": [960, 720]}
 
-YM_PER_PIX = 30 / 720  # meters per pixel in y dimension
-XM_PER_PIX = 3.7 / 700  # meters per pixel in x dimension
+# self.warper.pixel_size.y_pp = 30 / 720  # meters per pixel in y dimension
+# self.warper.pixel_size.x_pp = 3.7 / 700  # meters per pixel in x dimension
 
 
 def gen_curvature_calculator(fit):
@@ -55,7 +56,7 @@ def convert(pixel_fit, x_meter_per_pixel, y_meter_per_pixel) -> np.array:
 class Line:
     """Define a class to receive the characteristics of each line detection"""
 
-    def __init__(self, look_back: int = 2):
+    def __init__(self, look_back: int = 2, pixel_size: Optional[PixelSize]=None):
 
         self._logger = logging.getLogger(__name__)
 
@@ -87,10 +88,15 @@ class Line:
         self.pixels_x = None  # detected line pixels x coordinates
         self.pixels_y = None  # detected line pixels y coordinates
 
+        # Pixel size
+        self.pixel_size = pixel_size
+
     def update_curvature_calculator(self):
-        converted_fit = convert(self.best_fit, XM_PER_PIX, YM_PER_PIX)
+       
         self.pixel_curv_radius_func = gen_curvature_calculator(self.best_fit)
-        self.meter_curv_radius_func = gen_curvature_calculator(converted_fit)
+        if self.pixel_size is not None:
+            converted_fit = convert(self.best_fit, self.pixel_size.x_pp, self.pixel_size.y_pp)
+            self.meter_curv_radius_func = gen_curvature_calculator(converted_fit)
 
     def __blend_fit(self, fit, max_y):
         """Integrate/accomodate fit as the current fit and update the line accordingly
@@ -166,11 +172,14 @@ class LaneDetector:
         self.calibration_params = calibration_params
         self.line_search_margin = margin
 
-        # left and right lane lines
-        self.right = Line(look_back=look_back)
-        self.left = Line(look_back=look_back)
-
+        # bird-eye view perspective transform
         self.warper = warper
+
+        # left and right lane lines
+        self.right = Line(look_back=look_back, pixel_size=self.warper.pixel_size)
+        self.left = Line(look_back=look_back, pixel_size=self.warper.pixel_size)
+
+        
 
     @staticmethod
     def line_pixel(ploty, poly_fit=None):
@@ -246,8 +255,8 @@ class LaneDetector:
         text_thickness = 2
         max_y = warped_binary.shape[0] - 1
 
-        left_curv_radius = self.left.meter_curv_radius_func(YM_PER_PIX * max_y)
-        right_curv_radius = self.right.meter_curv_radius_func(YM_PER_PIX * max_y)
+        left_curv_radius = self.left.meter_curv_radius_func(self.warper.pixel_size.y_pp * max_y)
+        right_curv_radius = self.right.meter_curv_radius_func(self.warper.pixel_size.y_pp * max_y)
 
         # avg_curv_radius = (left_curv_radius + right_curv_radius) / 2
         out_img = cv2.addWeighted(
@@ -261,7 +270,7 @@ class LaneDetector:
 
         cv2.putText(
             out_img,
-            f"Curv. radius left: {self.left.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}m, right: {self.right.meter_curv_radius_func(YM_PER_PIX*max_y):.2f}m",
+            f"Curv. radius left: {left_curv_radius:.2f}m, right: {right_curv_radius:.2f}m",
             (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
@@ -284,7 +293,7 @@ class LaneDetector:
         offset = (
             w_center_x
             - (self.left.get_x(w_center_y) + self.right.get_x(w_center_y)) / 2
-        ) * XM_PER_PIX
+        ) * self.warper.pixel_size.x_pp
 
         cv2.putText(
             out_img,

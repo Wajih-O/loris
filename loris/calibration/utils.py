@@ -9,6 +9,24 @@ def to_gray(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 
+def extreme_rect(corners, nx):
+    """return the (outer) rectable (inner corners of the outer chessboard cases)
+    :param corner: corners as detected by cv2.findChessboardCorners
+    :param nx: number of inner columns of the chessboard
+    :return : rectangle/bounding-box as a dictionnary
+
+    """
+    sq_corners = corners.squeeze()
+    first_line = sq_corners[:nx]  # extracts first line of corners (with nx)
+    last_line = sq_corners[-nx:]  # extracts last line of corners
+    return {
+        "tl": first_line[0],
+        "tr": first_line[-1],
+        "bl": last_line[0],
+        "br": last_line[-1],
+    }
+
+
 def detect_corners(image, nx=9, ny=6) -> Tuple[Optional[np.ndarray], np.ndarray]:
     """Detect corner on calibration image (Chessboard)
     returns the internal coordinates wrapping the cv2.findChessboardCorners and spatial image shape"""

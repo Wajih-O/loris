@@ -86,7 +86,7 @@ def combined_threshold(
 
 
 def threshold_pipeline(
-    img, l_thresh=(0, 200), s_thresh=(20, 130), sx_thresh=(10, 200), ls_mean_min=100
+    img, l_thresh=(0, 200), s_thresh=(20, 130), sx_thresh=(10, 100), ls_mean_min=100
 ):
 
     """Thresholding pipeline extracting the relevant lane sides regions (as white pixels)
